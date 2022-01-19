@@ -23,7 +23,7 @@ $ idf.py flash
 $ idf.py monitor
 ```
 
-## Using the JTAG Adapter
+## Using the JTAG Adapter (Local Install)
 
 ### Initial Set-up
 
@@ -33,11 +33,27 @@ cd openocd-esp32
 ./bootstrap
 ./configure
 make
+sudo make install
 ```
+
 ### Flashing
 
 ```
 ../openocd-esp32/bin/openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg -f board/esp-wroom-32.cfg -c "program_esp32 build/partition_table/partition-table.bin 0x8000 verify" -c "program_esp32 build/bootloader/bootloader.bin 0x1000 verify" -c "program_esp32 build/aideck_esp.bin 0x10000 verify reset exit"
+```
+
+## Using the JTAG Adapter (Docker)
+
+### Initial Set-up
+
+```
+docker pull bitcraze/aideck-nina
+```
+
+### Flashing
+
+```
+docker run --rm -it -v $PWD:/module/ --device /dev/ttyUSB0 --privileged -P bitcraze/aideck-nina /bin/bash -c "/openocd-esp32/bin/openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg -f board/esp-wroom-32.cfg -c 'program_esp32 build/partition_table/partition-table.bin 0x8000 verify' -c 'program_esp32 build/bootloader/bootloader.bin 0x1000 verify' -c 'program_esp32 build/aideck_esp.bin 0x10000 verify reset exit'"
 ```
 
 [Esp32 IDF]: https://github.com/espressif/esp-idf.git
