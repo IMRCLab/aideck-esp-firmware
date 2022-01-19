@@ -23,4 +23,21 @@ $ idf.py flash
 $ idf.py monitor
 ```
 
+## Using the JTAG Adapter
+
+### Initial Set-up
+
+```
+git clone --recursive https://github.com/espressif/openocd-esp32.git
+cd openocd-esp32
+./bootstrap
+./configure
+make
+```
+### Flashing
+
+```
+../openocd-esp32/bin/openocd -f interface/ftdi/olimex-arm-usb-tiny-h.cfg -f board/esp-wroom-32.cfg -c "program_esp32 build/partition_table/partition-table.bin 0x8000 verify" -c "program_esp32 build/bootloader/bootloader.bin 0x1000 verify" -c "program_esp32 build/aideck_esp.bin 0x10000 verify reset exit"
+```
+
 [Esp32 IDF]: https://github.com/espressif/esp-idf.git
