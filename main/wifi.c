@@ -22,6 +22,8 @@
 
 #include "com.h"
 
+#define SOFT_AP_WIFI_SSID "Bitcraze AI-deck example"
+
 static esp_routable_packet_t rxp;
 static esp_routable_packet_t txp;
 
@@ -98,6 +100,32 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
   return ESP_OK;
 }
 
+/* Initialize WiFi as AP */
+static void wifi_init_softap()
+{
+  s_wifi_event_group = xEventGroupCreate();
+
+  // tcpip_adapter_init();
+  ESP_ERROR_CHECK(esp_event_loop_init(event_handler, NULL));
+
+  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+  ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+  wifi_config_t wifi_config = {
+      .ap = {
+          .ssid = SOFT_AP_WIFI_SSID,
+          .ssid_len = strlen(SOFT_AP_WIFI_SSID),
+          .max_connection = 1,
+          .authmode = WIFI_AUTH_OPEN},
+  };
+
+  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+  ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+  ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_AP, &wifi_config));
+  ESP_ERROR_CHECK(esp_wifi_start());
+
+  ESP_LOGI(TAG, "wifi_init_softap finished");
+}
+
 static void wifi_init_sta(const char * ssid, const char * key)
 {
   s_wifi_event_group = xEventGroupCreate();
@@ -146,7 +174,8 @@ static void wifi_ctrl(void* _param) {
         break;
       case 0x20: // Connect
         ESP_LOGD("WIFI", "Should connect");
-        wifi_init_sta(ssid, key);
+        wifi_init_softap();
+        // wifi_init_sta(ssid, key);
         break;
     }
   }    
