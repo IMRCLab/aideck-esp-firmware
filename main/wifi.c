@@ -22,8 +22,6 @@
 
 #include "com.h"
 
-#define SOFT_AP_WIFI_SSID "Bitcraze AI-deck example"
-
 static esp_routable_packet_t rxp;
 static esp_routable_packet_t txp;
 
@@ -32,6 +30,7 @@ static esp_routable_packet_t txp;
 
 static char ssid[MAX_SSID_SIZE];
 static char key[MAX_SSID_SIZE];
+static bool use_softap = false;
 
 const int WIFI_CONNECTED_BIT = BIT0;
 const int WIFI_SOCKET_DISCONNECTED = BIT1;
@@ -101,7 +100,7 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
 }
 
 /* Initialize WiFi as AP */
-static void wifi_init_softap()
+static void wifi_init_softap(const char *ssid)
 {
   s_wifi_event_group = xEventGroupCreate();
 
@@ -112,11 +111,11 @@ static void wifi_init_softap()
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
   wifi_config_t wifi_config = {
       .ap = {
-          .ssid = SOFT_AP_WIFI_SSID,
-          .ssid_len = strlen(SOFT_AP_WIFI_SSID),
+          .ssid_len = strlen(ssid),
           .max_connection = 1,
           .authmode = WIFI_AUTH_OPEN},
   };
+  strncpy((char *)wifi_config.ap.ssid, ssid, strlen(ssid));
 
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
   ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
@@ -158,24 +157,31 @@ static void wifi_ctrl(void* _param) {
     com_receive_wifi_ctrl_blocking((esp_routable_packet_t*) &rxp);
 
     switch (rxp.data[0]) {
-      case 0x10: // key
+      case 0x10: // ssid
         ESP_LOGI("WIFI", "Should set SSID");
         memcpy(ssid, &rxp.data[1], rxp.length - 3);
         ssid[rxp.length - 3 + 1] = 0;
         ESP_LOGD(TAG, "SSID: %s", ssid);
         // Save to NVS?
         break;
-      case 0x11: // key
+      case 0x11: // password
         ESP_LOGI("WIFI", "Should set password");
         memcpy(key, &rxp.data[1], rxp.length - 3);
         key[rxp.length - 3 + 1] = 0;
         ESP_LOGD(TAG, "KEY: %s", key);
+        use_softap = false;
         // Save to NVS?
+        break;
+      case 0x12: // softap
+        use_softap = true;
         break;
       case 0x20: // Connect
         ESP_LOGD("WIFI", "Should connect");
-        wifi_init_softap();
-        // wifi_init_sta(ssid, key);
+        if (use_softap) {
+          wifi_init_softap(ssid);
+        } else {
+          wifi_init_sta(ssid, key);
+        }
         break;
     }
   }    
