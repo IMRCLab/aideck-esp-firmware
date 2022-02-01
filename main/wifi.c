@@ -50,6 +50,16 @@ static int sock = -1;
 /* Accepted WiFi connection */
 static int conn = -1;
 
+enum {
+  WIFI_CTRL_SET_SSID                = 0x10,
+  WIFI_CTRL_SET_KEY                 = 0x11,
+
+  WIFI_CTRL_WIFI_CONNECT            = 0x20,
+
+  WIFI_CTRL_STATUS_WIFI_CONNECTED   = 0x31,
+  WIFI_CTRL_STATUS_CLIENT_CONNECTED = 0x32,
+};
+
 /* WiFi event handler */
 static esp_err_t event_handler(void *ctx, system_event_t *event)
 {
@@ -64,7 +74,7 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
       txp.route.destination = GAP8;
       txp.route.source = ESP32;
       txp.route.function = WIFI_CTRL;
-      txp.data[0] = 0x31; // WiFi connected
+      txp.data[0] = WIFI_CTRL_STATUS_WIFI_CONNECTED;
       memcpy(&txp.data[1], &event->event_info.got_ip.ip_info.ip.addr, sizeof(uint32_t));
       txp.length = 3 + sizeof(uint32_t);
 
@@ -100,7 +110,7 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
 }
 
 /* Initialize WiFi as AP */
-static void wifi_init_softap(const char *ssid)
+static void wifi_init_softap(const char *ssid, const char* key)
 {
   s_wifi_event_group = xEventGroupCreate();
 
@@ -116,6 +126,10 @@ static void wifi_init_softap(const char *ssid)
           .authmode = WIFI_AUTH_OPEN},
   };
   strncpy((char *)wifi_config.ap.ssid, ssid, strlen(ssid));
+  if (strlen(key) > 0) {
+    strncpy((char *)wifi_config.ap.password, key, strlen(key));
+    wifi_config.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
+  }
 
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
   ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
@@ -157,14 +171,14 @@ static void wifi_ctrl(void* _param) {
     com_receive_wifi_ctrl_blocking((esp_routable_packet_t*) &rxp);
 
     switch (rxp.data[0]) {
-      case 0x10: // ssid
+      case WIFI_CTRL_SET_SSID:
         ESP_LOGI("WIFI", "Should set SSID");
         memcpy(ssid, &rxp.data[1], rxp.length - 3);
         ssid[rxp.length - 3 + 1] = 0;
         ESP_LOGD(TAG, "SSID: %s", ssid);
         // Save to NVS?
         break;
-      case 0x11: // password
+      case WIFI_CTRL_SET_KEY:
         ESP_LOGI("WIFI", "Should set password");
         memcpy(key, &rxp.data[1], rxp.length - 3);
         key[rxp.length - 3 + 1] = 0;
@@ -172,19 +186,16 @@ static void wifi_ctrl(void* _param) {
         use_softap = false;
         // Save to NVS?
         break;
-      case 0x12: // softap
-        use_softap = true;
-        break;
-      case 0x20: // Connect
+      case WIFI_CTRL_WIFI_CONNECT:
         ESP_LOGD("WIFI", "Should connect");
-        if (use_softap) {
-          wifi_init_softap(ssid);
-        } else {
+        if (rxp.data[1] == 0) {
           wifi_init_sta(ssid, key);
+        } else {
+          wifi_init_softap(ssid, key);
         }
         break;
     }
-  }    
+  }
 }
 
 void wifi_bind_socket() {
@@ -245,7 +256,7 @@ static void wifi_task(void *pvParameters) {
     txp.route.source = ESP32;
     txp.route.destination = GAP8;
     txp.route.function = WIFI_CTRL;
-    txp.data[0] = 0x32; // WiFi client connection status
+    txp.data[0] = WIFI_CTRL_STATUS_CLIENT_CONNECTED;
     txp.data[1] = 1;    // connected
     txp.length = 4;
     com_send_blocking(&txp);
