@@ -272,7 +272,6 @@ static void wifi_task(void *pvParameters) {
     txp.route.source = ESP32;
     txp.route.destination = GAP8;
     txp.route.function = WIFI_CTRL;
-    txp.data[0] = 0x32; // WiFi client connection status
     txp.data[1] = 0;    // disconnected
     txp.length = 4;
     com_send_blocking(&txp);
