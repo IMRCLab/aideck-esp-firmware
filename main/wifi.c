@@ -30,7 +30,6 @@ static esp_routable_packet_t txp;
 
 static char ssid[MAX_SSID_SIZE];
 static char key[MAX_SSID_SIZE];
-static bool use_softap = false;
 
 const int WIFI_CONNECTED_BIT = BIT0;
 const int WIFI_SOCKET_DISCONNECTED = BIT1;
@@ -183,7 +182,6 @@ static void wifi_ctrl(void* _param) {
         memcpy(key, &rxp.data[1], rxp.length - 3);
         key[rxp.length - 3 + 1] = 0;
         ESP_LOGD(TAG, "KEY: %s", key);
-        use_softap = false;
         // Save to NVS?
         break;
       case WIFI_CTRL_WIFI_CONNECT:
@@ -272,6 +270,7 @@ static void wifi_task(void *pvParameters) {
     txp.route.source = ESP32;
     txp.route.destination = GAP8;
     txp.route.function = WIFI_CTRL;
+    txp.data[0] = WIFI_CTRL_STATUS_CLIENT_CONNECTED;
     txp.data[1] = 0;    // disconnected
     txp.length = 4;
     com_send_blocking(&txp);
