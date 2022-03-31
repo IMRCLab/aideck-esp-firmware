@@ -24,20 +24,32 @@
 
 #pragma once
 
-// The UART transport module represents the transport link between the router and the STM on the Crazyflie.
+// The ESP transport module represents a virtual transport link between the router and application code executing
+// in the ESP
 
 #include <stdint.h>
 #include <stddef.h>
 #include "cpx.h"
 
-#define UART_TRANSPORT_MTU 100
+#include "spi_transport.h"
 
-#if UART_TRANSPORT_MTU > CPX_MAX_PAYLOAD_SIZE
-    #pragma warn "UART MTU bigger than defined by CPX"
+#define ESP_TRANSPORT_MTU (SPI_TRANSPORT_MTU)
+
+#if ESP_TRANSPORT_MTU > CPX_MAX_PAYLOAD_SIZE
+    #pragma warn "ESP MTU bigger than defined by CPX"
 #endif
 
-void uart_transport_init();
+// esp_routable_packet_t is identical to CPXRoutablePacket_t
+typedef CPXRoutablePacket_t esp_routable_packet_t;
+
+void espTransportInit();
+
+
+// Interface used by ESP applications to exchange CPX packets with other part of the system
+void espAppSendToRouterBlocking(const esp_routable_packet_t* packet);
+void espAppReceiveFromRouter(esp_routable_packet_t* packet);
+
 
 // Interface used by the router
-void uart_transport_send(const CPXRoutablePacket_t* packet);
-void uart_transport_receive(CPXRoutablePacket_t* packet);
+void espTransportSend(const CPXRoutablePacket_t* packet);
+void espTransportReceive(CPXRoutablePacket_t* packet);

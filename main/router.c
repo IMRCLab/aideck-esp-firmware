@@ -1,3 +1,27 @@
+/**
+ * ,---------,       ____  _ __
+ * |  ,-^-,  |      / __ )(_) /_______________ _____  ___
+ * | (  O  ) |     / __  / / __/ ___/ ___/ __ `/_  / / _ \
+ * | / ,--´  |    / /_/ / / /_/ /__/ /  / /_/ / / /_/  __/
+ *    +------`   /_____/_/\__/\___/_/   \__,_/ /___/\___/
+ *
+ * ESP deck firmware
+ *
+ * Copyright (C) 2022 Bitcraze AB
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, in version 3.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #include "router.h"
 
 #include <stdio.h>
@@ -13,154 +37,129 @@
 #include "cpx.h"
 #include "spi_transport.h"
 #include "uart_transport.h"
-#include "com.h"
+#include "esp_transport.h"
 #include "wifi.h"
 
-static wifi_transport_packet_t wifi_txp;
-static wifi_transport_packet_t wifi_rxp;
+typedef struct {
+  CPXRoutablePacket_t txp;
+} RouteContext_t;
 
-static spi_transport_packet_t gap8_rxp;
-static spi_transport_packet_t gap8_txp;
+static RouteContext_t wifi_task_context;
+static CPXRoutablePacket_t wifiRxBuf;
 
-static uart_transport_packet_t cf_rxp;
-static uart_transport_packet_t cf_txp;
+static RouteContext_t gap8_task_context;
+static CPXRoutablePacket_t spiRxBuf;
 
-static esp_packet_t esp_rxp;
-static esp_packet_t esp_txp;
+static RouteContext_t cf_task_context;
+static CPXRoutablePacket_t uartRxBuf;
 
-static esp_packet_t esp_gap8_txp;
+static RouteContext_t esp_task_context;
+static CPXRoutablePacket_t espRxBuf;
+
+typedef void (*Receiver_t)(CPXRoutablePacket_t* packet);
+typedef void (*Sender_t)(const CPXRoutablePacket_t* packet);
+
+static const int START_UP_GAP8_ROUTER_RUNNING = BIT0;
+static const int START_UP_CF_ROUTER_RUNNING = BIT1;
+static const int START_UP_ESP_ROUTER_RUNNING = BIT2;
+static const int START_UP_WIFI_ROUTER_RUNNING = BIT3;
+static EventGroupHandle_t startUpEventGroup;
+
+static void splitAndSend(const CPXRoutablePacket_t* rxp, RouteContext_t* context, Sender_t sender, const uint16_t mtu) {
+  CPXRoutablePacket_t* txp = &context->txp;
+
+  txp->route = rxp->route;
+
+  uint16_t remainingToSend = rxp->dataLength;
+  const uint8_t* startOfDataToSend = rxp->data;
+  while (remainingToSend > 0) {
+    uint16_t toSend = remainingToSend;
+    bool lastPacket = rxp->route.lastPacket;
+    if (toSend > mtu) {
+      toSend = mtu;
+      lastPacket = false;
+    }
+
+    memcpy(txp->data, startOfDataToSend, toSend);
+    txp->dataLength = toSend;
+    txp->route.lastPacket = lastPacket;
+    sender(txp);
+
+    remainingToSend -= toSend;
+    startOfDataToSend += toSend;
+  }
+}
+
+static void route(Receiver_t receive, CPXRoutablePacket_t* rxp, RouteContext_t* context, const char* routerName) {
+  while(1) {
+    receive(rxp);
+
+    const CPXTarget_t source = rxp->route.source;
+    const CPXTarget_t destination = rxp->route.destination;
+    const uint16_t cpxDataLength = rxp->dataLength;
+
+    switch (destination) {
+      case CPX_T_GAP8:
+        ESP_LOGD("ROUTER", "%s [0x%02X] -> GAP8 [0x%02X] (%u)", routerName, source, destination, cpxDataLength);
+        splitAndSend(rxp, context, spi_transport_send, SPI_TRANSPORT_MTU);
+        break;
+      case CPX_T_STM32:
+        ESP_LOGD("ROUTER", "%s [0x%02X] -> STM32 [0x%02X] (%u)", routerName, source, destination, cpxDataLength);
+        splitAndSend(rxp, context, uart_transport_send, UART_TRANSPORT_MTU);
+        break;
+      case CPX_T_ESP32:
+        ESP_LOGD("ROUTER", "%s [0x%02X] -> ESP32 [0x%02X] (%u)", routerName, source, destination, cpxDataLength);
+        splitAndSend(rxp, context, espTransportSend, ESP_TRANSPORT_MTU);
+        break;
+      case CPX_T_HOST:
+        ESP_LOGD("ROUTER", "%s [0x%02X] -> HOST [0x%02X] (%u)", routerName, source, destination, cpxDataLength);
+        splitAndSend(rxp, context, wifi_transport_send, WIFI_TRANSPORT_MTU);
+        break;
+      default:
+        ESP_LOGW("ROUTER", "Cannot route from %s [0x%02X] to [0x%02X]", routerName, source, destination);
+    }
+  }
+}
 
 static void router_from_gap8(void* _param) {
-
-    while(1) {
-      // Wait for incoming packet from GAP8
-      spi_transport_receive(&gap8_rxp);
-
-      spi_transport_routable_packet_t * routable = (spi_transport_routable_packet_t*) &gap8_rxp;
-
-      switch ((routable->route.destination)) {
-        case STM32:
-          ESP_LOGD("ROUTER", "GAP8 [0x%02X] -> CF [0x%02X] (%u)", routable->route.source, routable->route.destination, routable->length);
-          // We need to split up the package here!
-          cf_txp.length = gap8_rxp.length;
-          memcpy(cf_txp.data, gap8_rxp.data, cf_txp.length);
-          uart_transport_send(&cf_txp);
-          break;
-        case ESP32:
-          ESP_LOGD("ROUTER", "GAP8 [0x%02X] -> ESP32 [0x%02X] (%u)", routable->route.source, routable->route.destination, routable->length);
-          // We need to split up the package here!
-          esp_gap8_txp.length = gap8_rxp.length;
-          memcpy(esp_gap8_txp.data, gap8_rxp.data, esp_gap8_txp.length);
-          com_router_post_packet(&esp_gap8_txp);
-          break;
-        case HOST:
-          ESP_LOGD("ROUTER", "GAP8 [0x%02X] -> HOST [0x%02X] (%u)", routable->route.source, routable->route.destination, routable->length);
-          // We need to split up the package here!
-          wifi_txp.length = gap8_rxp.length;
-          memcpy(wifi_txp.data, gap8_rxp.data, wifi_txp.length);
-          wifi_transport_send(&wifi_txp);
-          break;
-        default:
-          ESP_LOGW("ROUTER", "Cannot from GAP8 to [0x%02X]", (routable->route.destination));
-      }
-    }
+  xEventGroupSetBits(startUpEventGroup, START_UP_GAP8_ROUTER_RUNNING);
+  route(spi_transport_receive, &spiRxBuf, &gap8_task_context, "GAP8");
 }
 
 static void router_from_crazyflie(void* _param) {
-
-    while(1) {
-      uart_transport_receive(&cf_rxp);
-
-      uart_transport_routable_packet_t * routable = (uart_transport_routable_packet_t*) &cf_rxp;
-
-      switch(routable->route.destination) {
-        case GAP8:
-          ESP_LOGD("ROUTER", "CF [0x%02X] -> GAP8 [0x%02X] (%u)", routable->route.source, routable->route.destination, routable->length);
-          // Right now we're always sending to GAP8 (which always has higher MTU)
-          gap8_txp.length = cf_rxp.length;
-          memcpy(gap8_txp.data, cf_rxp.data, cf_rxp.length);
-          spi_transport_send(&gap8_txp);
-          break;
-        case ESP32:
-          ESP_LOGD("ROUTER", "CF [0x%02X] -> ESP32 [0x%02X] (%u)", routable->route.source, routable->route.destination, routable->length);
-          // Right now we're always sending to ESP32 (which always has higher MTU)
-          esp_txp.length = cf_rxp.length;
-          memcpy(esp_txp.data, cf_rxp.data, cf_rxp.length);
-          com_router_post_packet(&esp_txp);
-          break;
-        default:
-          ESP_LOGW("ROUTER", "Cannot route from CF to [0x%02X]", (routable->route.destination));
-
-      }
-    }
+  xEventGroupSetBits(startUpEventGroup, START_UP_CF_ROUTER_RUNNING);
+  route(uart_transport_receive, &uartRxBuf, &cf_task_context, "STM32");
 }
 
 static void router_from_esp32(void* _param) {
-
-    while(1) {
-      com_router_get_packet(&esp_rxp);
-
-      esp_routable_packet_t * routable = (esp_routable_packet_t*) &esp_rxp;
-
-      switch(routable->route.destination) {
-        case GAP8:
-          ESP_LOGD("ROUTER", "ESP32 [0x%02X] -> GAP8 [0x%02X] (%u)", routable->route.source, routable->route.destination, routable->length);
-          // Right now we're always sending to GAP8 (which always has higher MTU)
-          gap8_txp.length = esp_rxp.length;
-          memcpy(gap8_txp.data, esp_rxp.data, esp_rxp.length);
-          spi_transport_send(&gap8_txp);
-          break;
-        case STM32:
-          ESP_LOGD("ROUTER", "ESP32 [0x%02X] -> CF [0x%02X] (%u)", routable->route.source, routable->route.destination, routable->length);
-          // We need to split up the package here!
-          cf_txp.length = esp_rxp.length;
-          memcpy(cf_txp.data, esp_rxp.data, cf_txp.length);
-          uart_transport_send(&cf_txp);
-          break;
-        default:
-          ESP_LOGW("ROUTER", "Cannot route from ESP32 to [0x%02X]", (routable->route.destination));
-
-      }
-    }
+  xEventGroupSetBits(startUpEventGroup, START_UP_ESP_ROUTER_RUNNING);
+  route(espTransportReceive, &espRxBuf, &esp_task_context, "ESP32");
 }
 
 static void router_from_wifi(void* _param) {
-    // TODO: Fix this (wifi needs to be split, since it's being used from routing and using routing)
-    vTaskDelay(100);
-
-    while(1) {
-
-      wifi_transport_receive(&wifi_rxp);
-
-      wifi_transport_routable_packet_t * routable = (wifi_transport_routable_packet_t*) &wifi_rxp;
-
-      switch(routable->route.destination) {
-        case GAP8:
-          ESP_LOGD("ROUTER", "HOST [0x%02X] -> GAP8 [0x%02X] (%u)", routable->route.source, routable->route.destination, routable->length);
-          // Right now we're always sending to GAP8 (which always has higher MTU)
-          gap8_txp.length = wifi_rxp.length;
-          memcpy(gap8_txp.data, wifi_rxp.data, wifi_rxp.length);
-          spi_transport_send(&gap8_txp);
-          break;
-        case STM32:
-          ESP_LOGD("ROUTER", "HOST [0x%02X] -> CF [0x%02X] (%u)", routable->route.source, routable->route.destination, routable->length);
-          // We need to split up the package here!
-          cf_txp.length = wifi_rxp.length;
-          memcpy(cf_txp.data, wifi_rxp.data, wifi_rxp.length);
-          uart_transport_send(&cf_txp);
-          break;
-        default:
-          ESP_LOGW("ROUTER", "Cannot route from HOST to [0x%02X]", (routable->route.destination));
-
-      }
-    }
+  xEventGroupSetBits(startUpEventGroup, START_UP_WIFI_ROUTER_RUNNING);
+  route(wifi_transport_receive, &wifiRxBuf, &wifi_task_context, "HOST");
 }
 
+
 void router_init() {
-  xTaskCreate(router_from_gap8, "Router from GAP8", 10000, NULL, 1, NULL);
-  xTaskCreate(router_from_crazyflie, "Router from CF", 10000, NULL, 1, NULL);
-  xTaskCreate(router_from_esp32, "Router from ESP32", 10000, NULL, 1, NULL);
-  xTaskCreate(router_from_wifi, "Router from WIFI", 10000, NULL, 1, NULL);
+  startUpEventGroup = xEventGroupCreate();
+  xEventGroupClearBits(startUpEventGroup, START_UP_GAP8_ROUTER_RUNNING | START_UP_CF_ROUTER_RUNNING | START_UP_ESP_ROUTER_RUNNING | START_UP_WIFI_ROUTER_RUNNING);
+
+  xTaskCreate(router_from_gap8, "Router from GAP8", 5000, NULL, 1, NULL);
+  xTaskCreate(router_from_crazyflie, "Router from CF", 5000, NULL, 1, NULL);
+  xTaskCreate(router_from_esp32, "Router from ESP32", 5000, NULL, 1, NULL);
+  xTaskCreate(router_from_wifi, "Router from WIFI", 5000, NULL, 1, NULL);
+
+  ESP_LOGI("ROUTER", "Waiting for tasks to start");
+  xEventGroupWaitBits(startUpEventGroup,
+                      START_UP_GAP8_ROUTER_RUNNING |
+                      START_UP_CF_ROUTER_RUNNING |
+                      START_UP_ESP_ROUTER_RUNNING |
+                      START_UP_WIFI_ROUTER_RUNNING,
+                      pdTRUE, // Clear bits before returning
+                      pdTRUE, // Wait for all bits
+                      portMAX_DELAY);
 
   ESP_LOGI("ROUTER", "Initialized");
 }

@@ -1,11 +1,27 @@
-/* Hello World Example
+/**
+ * ,---------,       ____  _ __
+ * |  ,-^-,  |      / __ )(_) /_______________ _____  ___
+ * | (  O  ) |     / __  / / __/ ___/ ___/ __ `/_  / / _ \
+ * | / ,--´  |    / /_/ / / /_/ /__/ /  / /_/ / / /_/  __/
+ *    +------`   /_____/_/\__/\___/_/   \__,_/ /___/\___/
+ *
+ * ESP deck firmware
+ *
+ * Copyright (C) 2022 Bitcraze AB
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, in version 3.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
 
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
 #include <stdio.h>
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
@@ -18,80 +34,80 @@
 #include "esp_log.h"
 #include "esp_event.h"
 
+#include "esp_transport.h"
 #include "spi_transport.h"
 #include "uart_transport.h"
 #include "router.h"
 #include "com.h"
 #include "test.h"
 #include "wifi.h"
+#include "system.h"
 
 /* The LED is connected on GPIO */
 #define BLINK_GPIO 4
-static uint32_t blink_period_ms = 500;
 
-void test_echo(int count) {
-    static spi_transport_packet_t packet;
+// TODO krri remove?
+// void test_echo(int count) {
+//     static spi_transport_packet_t packet;
 
-    printf("Testing %d max-size pings ...\n", count);
+//     printf("Testing %d max-size pings ...\n", count);
 
-    packet.length = SPI_TRANSPORT_MTU;
-    packet.data[0] = 0x01;
-    spi_transport_send(&packet);
+//     packet.length = ESP_TRANSPORT_MTU;
+//     packet.data[0] = 0x01;
+//     spi_transport_send(&packet);
 
-    int start  = xTaskGetTickCount();
-    for (int i=0; i<100; i++) {
-        packet.length = 64;
-        packet.data[0] = 0x01;
-        spi_transport_send(&packet);
-        spi_transport_receive(&packet);
-    }
+//     int start  = xTaskGetTickCount();
+//     for (int i=0; i<100; i++) {
+//         packet.length = 64;
+//         packet.data[0] = 0x01;
+//         spi_transport_send(&packet);
+//         spi_transport_receive(&packet);
+//     }
 
-    spi_transport_receive(&packet);
+//     spi_transport_receive(&packet);
 
-    int stop = xTaskGetTickCount();
+//     int stop = xTaskGetTickCount();
 
-    int ticks = stop - start;
-    float runtime = (float)(stop - start) / (float)xPortGetTickRateHz();
-    float ping_per_seconds = count / runtime;
-    printf("Done in %f ms, %f ping/s\n", runtime * 1000, ping_per_seconds);
-}
+//     float runtime = (float)(stop - start) / (float)xPortGetTickRateHz();
+//     float ping_per_seconds = count / runtime;
+//     printf("Done in %f ms, %f ping/s\n", runtime * 1000, ping_per_seconds);
+// }
 
-void test_source() {
-    static spi_transport_packet_t packet;
+// void test_source() {
+//     static spi_transport_packet_t packet;
 
-    printf("Testing sourcing 100 packets ...\n");
+//     printf("Testing sourcing 100 packets ...\n");
 
-    packet.length = 10;
-    packet.data[0] = 0x02;
-    packet.data[1] = 100;
-    packet.data[2] = 62;
+//     packet.length = 10;
+//     packet.data[0] = 0x02;
+//     packet.data[1] = 100;
+//     packet.data[2] = 62;
 
-    spi_transport_send(&packet);
+//     spi_transport_send(&packet);
 
-    for (int i=0; i<100; i++) {
-        spi_transport_receive(&packet);
-    }
-    printf("Done!\n");
-}
+//     for (int i=0; i<100; i++) {
+//         spi_transport_receive(&packet);
+//     }
+//     printf("Done!\n");
+// }
 
-void test_sink(int count) {
-    static spi_transport_packet_t packet;
-    
-    printf("Testing %d packet TX\n", count);
+// void test_sink(int count) {
+//     static spi_transport_packet_t packet;
 
-    int start  = xTaskGetTickCount();
-    for (int i=0; i<count; i++) {
-        packet.length = SPI_TRANSPORT_MTU;
-        packet.data[0] = 0x00;
-        spi_transport_send(&packet);
-    }
-    int stop = xTaskGetTickCount();
+//     printf("Testing %d packet TX\n", count);
 
-    int ticks = stop - start;
-    float runtime = (float)(stop - start) / (float)xPortGetTickRateHz();
-    float pk_per_seconds = count / runtime;
-    printf("Done in %f ms, %f pk/s, %f B/s\n", runtime * 1000, pk_per_seconds, pk_per_seconds * SPI_TRANSPORT_MTU);
-}
+//     int start  = xTaskGetTickCount();
+//     for (int i=0; i<count; i++) {
+//         packet.length = ESP_TRANSPORT_MTU;
+//         packet.data[0] = 0x00;
+//         spi_transport_send(&packet);
+//     }
+//     int stop = xTaskGetTickCount();
+
+//     float runtime = (float)(stop - start) / (float)xPortGetTickRateHz();
+//     float pk_per_seconds = count / runtime;
+//     printf("Done in %f ms, %f pk/s, %f B/s\n", runtime * 1000, pk_per_seconds, pk_per_seconds * ESP_TRANSPORT_MTU);
+// }
 
 int my_vprintf(const char * fmt, va_list ap) {
     int len = vprintf("Hello: ", ap);
@@ -99,76 +115,9 @@ int my_vprintf(const char * fmt, va_list ap) {
     return len;
 }
 
-/*void app_main(void)
-{
 
-    esp_log_set_vprintf(my_vprintf);
-
-    printf("Hello world!\n");
-
-    //Print chip information
-    esp_chip_info_t chip_info;
-    esp_chip_info(&chip_info);
-    printf("This is %s chip with %d CPU core(s), WiFi%s%s, ",
-            CONFIG_IDF_TARGET,
-            chip_info.cores,
-            (chip_info.features & CHIP_FEATURE_BT) ? "/BT" : "",
-            (chip_info.features & CHIP_FEATURE_BLE) ? "/BLE" : "");
-
-    printf("silicon revision %d, ", chip_info.revision);
-
-    printf("%dMB %s flash\n", spi_flash_get_chip_size() / (1024 * 1024),
-            (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
-
-    printf("Minimum free heap size: %d bytes\n", esp_get_minimum_free_heap_size());
-
-    // Intalling GPIO ISR service so that other parts of the code can
-    // setup individual GPIO interrupt routines
-    gpio_install_isr_service(ESP_INTR_FLAG_EDGE);
-
-    spi_transport_init();
-
-    vTaskDelay(200);
-
-    //test_sink(100);
-     //test_echo(1);
-
-    static spi_transport_packet_t packet;
-    static spi_transport_packet_t packet_rx;
-
-    packet.length = 6;
-    packet.data[0] = 1;
-    packet.data[1] = 'B';
-    packet.data[2] = 'C';
-    packet.data[3] = 'D';
-    packet.data[4] = 'E';
-    packet.data[5] = 'F';
-
-    spi_transport_send(&packet);
-
-    spi_transport_receive(&packet_rx);
-
-    printf("RX len is %u\n", packet_rx.length);
-
-    for (int i = 0; i < 6; i++) {
-      printf("%c ", packet_rx.data[i]);
-    }
-
-    printf("\n");
-
-    //test_source();
-
-    while(1) {
-        vTaskDelay(1000);
-    }
-    esp_restart();
-}*/
 
 #define DEBUG_TXD_PIN (GPIO_NUM_0) // Nina 27 /SYSBOOT) => 0
-//#define DEBUG_RXD_PIN (GPIO_NUM_12) // Nina 36 => 12
-
-// 27 => 0
-// 34 => 35
 
 int a = 1;
 
@@ -179,10 +128,10 @@ void app_main(void)
     esp_log_level_set("SPI", ESP_LOG_INFO);
     esp_log_level_set("UART", ESP_LOG_INFO);
     esp_log_level_set("SYS", ESP_LOG_INFO);
-    esp_log_level_set("ROUTER", ESP_LOG_DEBUG);
+    esp_log_level_set("ROUTER", ESP_LOG_INFO);
     esp_log_level_set("COM", ESP_LOG_INFO);
     esp_log_level_set("TEST", ESP_LOG_INFO);
-    esp_log_level_set("WIFI", ESP_LOG_DEBUG);
+    esp_log_level_set("WIFI", ESP_LOG_INFO);
     //esp_log_set_vprintf(my_vprintf);
 
     ESP_ERROR_CHECK(nvs_flash_init());
@@ -197,8 +146,6 @@ void app_main(void)
     gpio_install_isr_service(ESP_INTR_FLAG_EDGE);
 
     spi_transport_init();
-
-    vTaskDelay(50);
 
     const uart_config_t uart_config = {
       .baud_rate = 115200,
@@ -215,32 +162,23 @@ void app_main(void)
     ESP_LOGI("SYS", "\n\n -- Starting up --\n");
     ESP_LOGI("SYS", "Minimum free heap size: %d bytes", esp_get_minimum_free_heap_size());
 
+    espTransportInit();
     uart_transport_init();
-
     com_init();
 
-    router_init();
-
-    //test_uart();
-
+    // TODO krri remove test
     test_init();
 
     wifi_init();
+    router_init();
 
-    vTaskDelay(200);
-
-    //test_sink(10000);
-    // test_echo(100);
-    // test_source();
+    system_init();
 
     while(1) {
         vTaskDelay(10);
         gpio_set_level(BLINK_GPIO, 1);
         vTaskDelay(10);
         gpio_set_level(BLINK_GPIO, 0);
-        //ESP_LOGW("SPI", "Wooo\n");
-
-        //uart_transport_send(&tp);
     }
     esp_restart();
 }
